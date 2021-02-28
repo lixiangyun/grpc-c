@@ -221,9 +221,19 @@ void grpc_c_client_master_task(void *arg) {
 
 grpc_c_client_t * grpc_c_client_init( const char *server_name, 
                                     grpc_channel_credentials *channel_creds,
-                                    grpc_channel_args *channel_args)
+                                    grpc_channel_args *channel_args,
+                                    int thread_nums)
 {
     grpc_c_client_t *client;
+    int n;
+    if (thread_nums <= 0)
+    {
+        n = gpr_cpu_num_cores();
+    }
+    else
+    {
+    	n = thread_nums;
+    }
 
     if (server_name == NULL) {
         GRPC_C_ERR("Invalid hostname or client-id");
@@ -240,7 +250,7 @@ grpc_c_client_t * grpc_c_client_init( const char *server_name,
 
     client->host  = grpc_slice_from_copied_string(server_name);
 
-    client->thread_pool = grpc_c_thread_pool_create(gpr_cpu_num_cores());
+    client->thread_pool = grpc_c_thread_pool_create(n);
 
     /*
      * Initialize mutex and condition variables
@@ -281,13 +291,18 @@ grpc_c_client_t * grpc_c_client_init( const char *server_name,
     return client;
 }
 
-int grpc_c_client_stop (grpc_c_client_t *client) {
-
+int grpc_c_client_stop (grpc_c_client_t *client) { 
+    grpc_event event;
     gpr_mu_lock(&client->lock);
     client->shutdown = 1;
     grpc_channel_destroy(client->channel);
     client->channel = NULL;
     grpc_completion_queue_shutdown(client->queue);
+    do 
+    {
+        event = grpc_completion_queue_next(client->queue, gpr_inf_future(GPR_CLOCK_REALTIME), NULL);
+    } while (event.type != GRPC_QUEUE_SHUTDOWN);       
+
     gpr_mu_unlock(&client->lock);
 
     return GRPC_C_OK;
